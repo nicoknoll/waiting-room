@@ -10,7 +10,6 @@ packages:
           main: ""
           runtime: python:3.11
           web: "raw"
-          webSecure: false
           parameters: {}
           annotations: {}
           limits: {}
