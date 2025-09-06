@@ -38,20 +38,20 @@ def main(event, context):
         if path == "/validate":
             return validate_access_token(query_string)
 
-        promote_queued_users()
-
         session_id = get_session_id_from_cookie(event)
+        session_granted = session_id and is_session_granted(session_id)
+        session_queued = session_id and is_session_queued(session_id)
 
-        if not session_id:
-            return create_queued_session()
+        if not (session_granted or session_queued):
+            # ensure a session is at least queued
+            session_id = create_queued_session()
+
+        promote_queued_users()
 
         if is_session_granted(session_id):
             return handle_granted_session(session_id)
 
-        if is_session_queued(session_id):
-            return handle_queued_session(session_id)
-
-        return create_queued_session()
+        return handle_queued_session(session_id)
 
     except Exception as e:
         return {"statusCode": 500, "body": {"error": str(e)}}
@@ -110,13 +110,11 @@ def create_access_token_cookie(access_token: str) -> str:
     return cookie.output(header="").strip()
 
 
-def create_queued_session() -> Dict[str, Any]:
+def create_queued_session() -> str:
     session_id = str(uuid.uuid4())
     current_time = int(time.time() * 1000)
-
     redis_client.set(f"queued:{session_id}", current_time, ex=QUEUED_TTL)
-
-    return handle_queued_session(session_id)
+    return session_id
 
 
 def handle_granted_session(session_id: str) -> Dict[str, Any]:
