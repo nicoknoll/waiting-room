@@ -1,13 +1,17 @@
 parameters: {}
-environment: {}
 packages:
-    - name: waiting
-      shared: false
-      functions:
-        - name: room
-          binary: false
-          main: "waiting-room.py"
-          runtime: python:3.11
-          web: "raw"
-          webSecure: false
-          limits: {}
+  - name: waiting
+    shared: false
+    environment: {}
+    parameters: {}
+    annotations: {}
+    functions:
+      - name: room
+        binary: false
+        main: "waiting-room.py"
+        runtime: python:3.11
+        web: "raw"
+        parameters: {}
+        environment: {}
+        annotations: {}
+        limits: {}
