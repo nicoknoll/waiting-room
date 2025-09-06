@@ -1,15 +1,15 @@
 parameters: {}
 environment: {}
 packages:
-    - name: pretix
+    - name: waiting
       shared: false
       environment: {}
       parameters: {}
       annotations: {}
       functions:
-        - name: waitingroom
+        - name: room
           binary: false
-          main: ""
+          main: "waiting-room.py"
           runtime: python:3.11
           web: "raw"
           webSecure: false
