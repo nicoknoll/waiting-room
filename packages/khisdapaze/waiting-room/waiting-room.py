@@ -9,14 +9,7 @@ import hashlib
 from http.cookies import SimpleCookie
 from typing import Optional, Dict, Any
 
-
-redis_client = redis.Redis(
-    ssl=True,
-    host=os.environ["REDIS_HOST"],
-    port=int(os.environ.get("REDIS_PORT", 6379)),
-    password=os.environ.get("REDIS_PASSWORD"),
-    decode_responses=True,
-)
+redis_client = redis.from_url(os.environ["REDIS_LOCATION"], decode_responses=True)
 
 # 10 minutes in queue, gets renewed on each check
 QUEUED_TTL = 600
