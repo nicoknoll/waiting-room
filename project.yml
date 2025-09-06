@@ -2,7 +2,6 @@ parameters: {}
 packages:
   - name: waiting
     shared: false
-    environment: {}
     parameters: {}
     annotations: {}
     functions:
@@ -12,6 +11,5 @@ packages:
         runtime: python:3.11
         web: "raw"
         parameters: {}
-        environment: {}
         annotations: {}
         limits: {}
