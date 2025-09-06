@@ -19,8 +19,8 @@ GRANTED_TTL = 300
 # (you can still access even though your granted session expired, until this token expires)
 ACCESS_TOKEN_TTL = 600
 
-MAX_USERS = int(os.environ.get("MAX_USERS", "100"))
-SECRET = os.environ["SECRET"]
+MAX_USERS = int(os.environ.get("WAITING_ROOM_MAX_USERS", "100"))
+SECRET = os.environ["WAITING_ROOM_SECRET"]
 
 SESSION_COOKIE_NAME = "pretix-waitingroom-session"
 ACCESS_TOKEN_COOKIE_NAME = "pretix-waitingroom-access-token"
