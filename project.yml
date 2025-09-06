@@ -1,7 +1,4 @@
 parameters: {}
-environment:
-  REDIS_LOCATION: ${REDIS_LOCATION}
-  WAITING_ROOM_SECRET: ${WAITING_ROOM_SECRET}
 packages:
     - name: default
       shared: false
@@ -13,6 +10,9 @@ packages:
           main: ""
           runtime: python:3.11
           web: "raw"
+          environment:
+            REDIS_LOCATION: ${REDIS_LOCATION}
+            WAITING_ROOM_SECRET: ${WAITING_ROOM_SECRET}
           parameters: {}
           annotations: {}
           limits: {}
