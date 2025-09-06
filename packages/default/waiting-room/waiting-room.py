@@ -38,6 +38,8 @@ def main(event, context):
         if path == "/validate":
             return validate_access_token(query_string)
 
+        promote_queued_users()
+
         session_id = get_session_id_from_cookie(event)
 
         if not session_id:
@@ -140,11 +142,6 @@ def handle_granted_session(session_id: str) -> Dict[str, Any]:
 
 def handle_queued_session(session_id: str) -> Dict[str, Any]:
     redis_client.expire(f"queued:{session_id}", QUEUED_TTL)
-
-    promote_queued_users()
-
-    if is_session_granted(session_id):
-        return handle_granted_session(session_id)
 
     position = get_queue_position(session_id)
     queued_at = int(redis_client.get(f"queued:{session_id}"))
