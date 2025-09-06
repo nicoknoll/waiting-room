@@ -2,7 +2,7 @@ parameters: {}
 environment:
   REDIS_LOCATION: ${REDIS_LOCATION}
   WAITING_ROOM_SECRET: ${WAITING_ROOM_SECRET}
-  WAITING_ROOM_MAX_USERS: ${WAITING_ROOM_MAX_USERS}
+  # WAITING_ROOM_MAX_USERS: ${WAITING_ROOM_MAX_USERS}
 packages:
     - name: default
       shared: false
