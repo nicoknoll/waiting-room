@@ -1,6 +1,6 @@
 parameters: {}
 packages:
-  - name: functions
+  - name: khisdapaze
     shared: false
     parameters: {}
     annotations: {}
