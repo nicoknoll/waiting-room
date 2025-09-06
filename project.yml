@@ -1,6 +1,6 @@
 parameters: {}
 packages:
-    - name: functions
+    - name: default
       shared: false
       parameters: {}
       annotations: {}
