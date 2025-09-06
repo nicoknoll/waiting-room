@@ -3,9 +3,6 @@ environment: {}
 packages:
     - name: waiting
       shared: false
-      environment: {}
-      parameters: {}
-      annotations: {}
       functions:
         - name: room
           binary: false
@@ -13,7 +10,4 @@ packages:
           runtime: python:3.11
           web: "raw"
           webSecure: false
-          parameters: {}
-          environment: {}
-          annotations: {}
           limits: {}
