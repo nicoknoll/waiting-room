@@ -1,11 +1,11 @@
 parameters: {}
 packages:
-  - name: waiting
+  - name: functions
     shared: false
     parameters: {}
     annotations: {}
     functions:
-      - name: room
+      - name: waiting-room
         binary: false
         main: "waiting-room.py"
         runtime: python:3.11
