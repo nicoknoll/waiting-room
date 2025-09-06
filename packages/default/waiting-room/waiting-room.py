@@ -23,8 +23,8 @@ ACCESS_TOKEN_TTL = 600
 MAX_USERS = int(os.environ.get("WAITING_ROOM_MAX_USERS", "100"))
 SECRET = os.environ["WAITING_ROOM_SECRET"]
 
-SESSION_COOKIE_NAME = "waiting-room-session"
-ACCESS_TOKEN_COOKIE_NAME = "waiting-room-access-token"
+SESSION_COOKIE_NAME = "waiting_room_session_id"
+ACCESS_TOKEN_COOKIE_NAME = "waiting_room_access_token"
 
 
 def main(event, context):
