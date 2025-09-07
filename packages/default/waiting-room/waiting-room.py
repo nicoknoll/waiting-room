@@ -50,7 +50,7 @@ def main(event, context):
         promote_queued_users()
 
         if is_session_granted(session_id):
-            next_url = query_string.get("next", [0])[0]
+            next_url = query_params.get("next", [0])[0]
             return handle_granted_session(session_id, next_url=next_url)
 
         return handle_queued_session(session_id)
