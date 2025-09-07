@@ -31,12 +31,13 @@ def main(event, context):
     try:
         path = event.get("http", {}).get("path", "/")
         query_string = event.get("http", {}).get("queryString", "")
+        query_params = parse_qs(query_string)
 
         if path == "/stats":
             return get_queue_stats()
 
         if path == "/validate":
-            return validate_access_token(query_string)
+            return validate_access_token(query_params)
 
         session_id = get_session_id_from_cookie(event)
         session_granted = session_id and is_session_granted(session_id)
@@ -49,7 +50,8 @@ def main(event, context):
         promote_queued_users()
 
         if is_session_granted(session_id):
-            return handle_granted_session(session_id)
+            next_url = query_string.get("next", [0])[0]
+            return handle_granted_session(session_id, next_url=next_url)
 
         return handle_queued_session(session_id)
 
@@ -117,10 +119,18 @@ def create_queued_session() -> str:
     return session_id
 
 
-def handle_granted_session(session_id: str) -> Dict[str, Any]:
+def handle_granted_session(session_id: str, next_url=None) -> Dict[str, Any]:
     granted_at = int(redis_client.get(f"granted:{session_id}"))
     ttl = redis_client.ttl(f"granted:{session_id}")
     access_token = generate_access_token(session_id)
+
+    data = {
+        "session_id": session_id,
+        "status": "granted",
+        "granted_at": timestamp_to_iso(granted_at),
+        "expires_in": ttl,
+        "access_token": access_token,
+    }
 
     return {
         "statusCode": 200,
@@ -131,14 +141,22 @@ def handle_granted_session(session_id: str) -> Dict[str, Any]:
                 create_access_token_cookie(access_token),
             ]
         },
-        "body": {
-            "session_id": session_id,
-            "status": "granted",
-            "granted_at": timestamp_to_iso(granted_at),
-            "expires_in": ttl,
-            "access_token": access_token,
-        },
+        "body": render_granted_html(data, next_url),
     }
+
+
+def render_granted_html(data, next_url: str) -> str:
+    return f"""
+    <html>
+    <head><title>Access Granted</title></head>
+    <body>
+        <h1>Access Granted</h1>
+        <p>Your access has been granted. You can now proceed to the application.</p>
+        <p><a href="{next_url or '/'}">Continue to the application</a></p>
+        <pre>{data}</pre>
+    </body>
+    </html>
+    """
 
 
 def handle_queued_session(session_id: str) -> Dict[str, Any]:
@@ -147,17 +165,40 @@ def handle_queued_session(session_id: str) -> Dict[str, Any]:
     position = get_queue_position(session_id)
     queued_at = int(redis_client.get(f"queued:{session_id}"))
 
+    data = {
+        "session_id": session_id,
+        "status": "queued",
+        "queued_at": timestamp_to_iso(queued_at),
+        "position": position,
+        "estimated_wait_time": calculate_wait_time(position),
+    }
+
     return {
         "statusCode": 200,
         "headers": {"Set-Cookie": create_session_cookie(session_id)},
-        "body": {
-            "session_id": session_id,
-            "status": "queued",
-            "queued_at": timestamp_to_iso(queued_at),
-            "position": position,
-            "estimated_wait_time": calculate_wait_time(position),
-        },
+        "body": render_queued_html(data),
     }
+
+
+def render_queued_html(data) -> str:
+    return f"""
+    <html>
+    <head><title>Waiting Room</title></head>
+    <body>
+        <h1>You are in the queue</h1>
+        <p>Your current position in the queue is: {data['position']}</p>
+        <p>Estimated wait time: {data['estimated_wait_time']} seconds</p>
+        <p>This page will refresh automatically every 15 seconds to update your position.</p>
+        <p>Please do not close this page, otherwise you will lose your place in the queue.</p>
+        <pre>{data}</pre>
+        <script>
+            setTimeout(() => {{
+                window.location.reload();
+            }}, 15000); // Refresh every 15 seconds
+        </script>
+    </body>
+    </html>
+    """
 
 
 def promote_queued_users():
@@ -279,8 +320,7 @@ def get_queue_stats() -> Dict[str, Any]:
     }
 
 
-def validate_access_token(query_string: str) -> Dict[str, Any]:
-    query_params = parse_qs(query_string)
+def validate_access_token(query_params: dict) -> Dict[str, Any]:
     token = query_params.get("token", [None])[0]
     session_id = query_params.get("session", [None])[0]
 
