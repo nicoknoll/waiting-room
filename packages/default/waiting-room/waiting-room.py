@@ -158,7 +158,7 @@ def render_granted_html(data, next_url: str) -> str:
         <p>Your access has been granted. You can now proceed to the application.</p>
         <p><a href="{next_url or '/'}">Continue to the application</a></p>
         <p>This page will automatically redirect you in 5 seconds.</p>
-        <p style="color: #555">Session ID: {data['session_id']}</p>
+        <p style="color: #999">Session ID: {data['session_id']}</p>
         <script>
             // Automatically redirect after 5 seconds
             setTimeout(() => {{
@@ -202,7 +202,7 @@ def render_queued_html(data) -> str:
         <p>Estimated wait time: {estimated_wait_min == 0 and "Less than a minute" or f"{estimated_wait_min} minute(s)"}</p>
         <p>This page will refresh automatically every 15 seconds to update your position.</p>
         <p>Please do not close this page, otherwise you will lose your place in the queue.</p>
-        <p style="color: #555">Session ID: {data['session_id']}</p>
+        <p style="color: #999">Session ID: {data['session_id']}</p>
         <script>
             setTimeout(() => {{
                 window.location.reload();
