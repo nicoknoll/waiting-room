@@ -97,7 +97,8 @@ def create_session_cookie(session_id: str) -> str:
     cookie[SESSION_COOKIE_NAME] = session_id
     cookie[SESSION_COOKIE_NAME]["path"] = "/"
     cookie[SESSION_COOKIE_NAME]["httponly"] = True
-    cookie[SESSION_COOKIE_NAME]["samesite"] = "Strict"
+    # cookie[SESSION_COOKIE_NAME]["samesite"] = "Strict"
+    cookie[SESSION_COOKIE_NAME]["secure"] = True
     cookie[SESSION_COOKIE_NAME]["max-age"] = 86400 * 30
     return cookie.output(header="").strip()
 
@@ -107,7 +108,8 @@ def create_access_token_cookie(access_token: str) -> str:
     cookie[ACCESS_TOKEN_COOKIE_NAME] = access_token
     cookie[ACCESS_TOKEN_COOKIE_NAME]["path"] = "/"
     cookie[ACCESS_TOKEN_COOKIE_NAME]["httponly"] = True
-    cookie[ACCESS_TOKEN_COOKIE_NAME]["samesite"] = "Strict"
+    # cookie[ACCESS_TOKEN_COOKIE_NAME]["samesite"] = "Strict"
+    cookie[ACCESS_TOKEN_COOKIE_NAME]["secure"] = True
     cookie[ACCESS_TOKEN_COOKIE_NAME]["max-age"] = ACCESS_TOKEN_TTL
     return cookie.output(header="").strip()
 
@@ -133,13 +135,14 @@ def handle_granted_session(session_id: str, next_url=None) -> Dict[str, Any]:
     }
 
     return {
-        "statusCode": 200,
+        "statusCode": 302,
         "headers": {
             # both cookies need to exist for access
+            "Location": next_url or "/",
             "Set-Cookie": [
                 create_session_cookie(session_id),
                 create_access_token_cookie(access_token),
-            ]
+            ],
         },
         "body": render_granted_html(data, next_url),
     }
