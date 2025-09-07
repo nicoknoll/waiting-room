@@ -153,6 +153,7 @@ def render_granted_html(data, next_url: str) -> str:
         <h1>Access Granted</h1>
         <p>Your access has been granted. You can now proceed to the application.</p>
         <p><a href="{next_url or '/'}">Continue to the application</a></p>
+        <p>This page will automatically redirect you in 5 seconds.</p>
         <pre>{data}</pre>
         <script>
             // Automatically redirect after 5 seconds
