@@ -126,7 +126,10 @@ def handle_granted_session(session_id: str) -> Dict[str, Any]:
         "statusCode": 200,
         "headers": {
             # both cookies need to exist for access
-            "Set-Cookie": f"{create_session_cookie(session_id)}; {create_access_token_cookie(access_token)}"
+            "Set-Cookie": [
+                create_session_cookie(session_id),
+                create_access_token_cookie(access_token),
+            ]
         },
         "body": {
             "session_id": session_id,
