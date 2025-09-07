@@ -191,13 +191,14 @@ def handle_queued_session(session_id: str) -> Dict[str, Any]:
 
 
 def render_queued_html(data) -> str:
+    estimated_wait_min = data["estimated_wait_time"] // 60
     return f"""
     <html>
     <head><title>Waiting Room</title></head>
     <body>
         <h1>You are in the queue</h1>
         <p>Your current position in the queue is: {data['position']}</p>
-        <p>Estimated wait time: {data['estimated_wait_time']} seconds</p>
+        <p>Estimated wait time: {estimated_wait_min == 0 and "Less than a minute" or f"{estimated_wait_min} minute(s)"}</p>
         <p>This page will refresh automatically every 15 seconds to update your position.</p>
         <p>Please do not close this page, otherwise you will lose your place in the queue.</p>
         <pre>{data}</pre>
