@@ -274,14 +274,17 @@ def calculate_wait_time(position):
     available_slots = MAX_USERS - len(expiry_schedule)
 
     if position <= available_slots:
-        return 0  # Immediate access
+        return 0
 
     slot_needed = position - available_slots
     if slot_needed <= len(expiry_schedule):
         return expiry_schedule[slot_needed - 1]
 
-    # Need to wait for multiple session cycles
-    return expiry_schedule[0] + ((slot_needed - len(expiry_schedule)) * GRANTED_TTL)
+    # Find which slot this position will eventually use
+    cycles_needed = (slot_needed - 1) // len(expiry_schedule)
+    slot_index = (slot_needed - 1) % len(expiry_schedule)
+
+    return expiry_schedule[slot_index] + (cycles_needed * GRANTED_TTL)
 
 
 def get_queue_stats() -> Dict[str, Any]:
