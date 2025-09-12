@@ -271,20 +271,17 @@ def get_granted_expiry_schedule():
 
 def calculate_wait_time(position):
     expiry_schedule = get_granted_expiry_schedule()
-    available_slots = MAX_USERS - len(expiry_schedule)
 
-    if position <= available_slots:
-        return 0
+    # If we have over-granted users, just assign to expiring slots first
+    if position <= len(expiry_schedule):
+        return expiry_schedule[position - 1]
 
-    slot_needed = position - available_slots
-    if slot_needed <= len(expiry_schedule):
-        return expiry_schedule[slot_needed - 1]
+    # Only use MAX_USERS logic for positions beyond current granted users
+    remaining_position = position - len(expiry_schedule)
+    cycles_needed = (remaining_position - 1) // MAX_USERS
+    slot_index = (remaining_position - 1) % MAX_USERS
 
-    # Find which slot this position will eventually use
-    cycles_needed = (slot_needed - 1) // len(expiry_schedule)
-    slot_index = (slot_needed - 1) % len(expiry_schedule)
-
-    return expiry_schedule[slot_index] + (cycles_needed * GRANTED_TTL)
+    return expiry_schedule[slot_index] + ((cycles_needed + 1) * GRANTED_TTL)
 
 
 def get_queue_stats() -> Dict[str, Any]:
