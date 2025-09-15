@@ -14,8 +14,8 @@ from typing import Optional, Dict, Any
 
 redis_client = redis.from_url(os.environ["REDIS_LOCATION"], decode_responses=True)
 
-# 10 minutes in queue, gets renewed on each check
-QUEUED_TTL = 600
+# 5 minutes in queue, gets renewed on each check
+QUEUED_TTL = 300
 # 5 minutes of access time is blocked
 GRANTED_TTL = 300
 # 10 minutes validity for access token -> sliding window
@@ -250,12 +250,13 @@ def render_queued_html(data) -> str:
                 )
 
             current_time = int(time.time())
-            minutes_until_unblock = max(0, (blocked_until - current_time) // 60)
+            seconds_until_unblock = max(0, blocked_until - current_time)
 
-            if minutes_until_unblock > 0:
+            if seconds_until_unblock > 0:
+                minutes_until_unblock = seconds_until_unblock // 60
                 time_desc = (
                     f"in {minutes_until_unblock} minute(s)"
-                    if minutes_until_unblock > 1
+                    if minutes_until_unblock >= 1
                     else "in less than a minute"
                 )
                 blocked_message = f"""
