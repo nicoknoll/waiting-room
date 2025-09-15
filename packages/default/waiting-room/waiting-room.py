@@ -254,21 +254,16 @@ def render_queued_html(data) -> str:
 
             if minutes_until_unblock > 0:
                 time_desc = (
-                    f"approximately {minutes_until_unblock} minute(s)"
+                    f"in {minutes_until_unblock} minute(s)"
                     if minutes_until_unblock > 1
-                    else "less than a minute"
+                    else "in less than a minute"
                 )
                 blocked_message = f"""
-                <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px;">
-                    <strong>Notice:</strong> Access is temporarily paused for {time_desc}.
-                    Your position in the queue is maintained, but promotion to active access is delayed.
-                </div>
+                <p><strong>Notice:</strong> Access is paused until the start of the pre-sale ({time_desc}).</p>
                 """
         except (ValueError, TypeError):
             blocked_message = """
-            <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px;">
-                <strong>Notice:</strong> Access is temporarily paused. Your position in the queue is maintained.
-            </div>
+            <p><strong>Notice:</strong> Access is paused until the start of the pre-sale.</p>
             """
 
     return f"""
