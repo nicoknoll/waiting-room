@@ -24,7 +24,9 @@ ACCESS_TOKEN_TTL = 600
 MAX_USERS = int(os.environ.get("WAITING_ROOM_MAX_USERS", "100"))
 SECRET = os.environ["WAITING_ROOM_SECRET"]
 BLOCKED_UNTIL_TIMESTAMP = os.environ.get("WAITING_ROOM_BLOCKED_UNTIL")
-BLOCK_DURATION_MINUTES = int(os.environ.get("WAITING_ROOM_BLOCK_DURATION_MINUTES", "30"))
+BLOCK_DURATION_MINUTES = int(
+    os.environ.get("WAITING_ROOM_BLOCK_DURATION_MINUTES", "30")
+)
 
 SESSION_COOKIE_NAME = "waiting_room_session_id"
 ACCESS_TOKEN_COOKIE_NAME = "waiting_room_access_token"
@@ -44,10 +46,16 @@ def is_access_blocked_by_timestamp() -> bool:
             blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
         else:
             # Try to parse as ISO format
-            blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+            blocked_until = int(
+                datetime.fromisoformat(
+                    BLOCKED_UNTIL_TIMESTAMP.replace("Z", "+00:00")
+                ).timestamp()
+            )
 
         current_time = int(time.time())
-        block_start_time = blocked_until - (BLOCK_DURATION_MINUTES * 60)  # Convert minutes to seconds
+        block_start_time = blocked_until - (
+            BLOCK_DURATION_MINUTES * 60
+        )  # Convert minutes to seconds
 
         return block_start_time <= current_time <= blocked_until
     except (ValueError, TypeError):
@@ -87,7 +95,10 @@ def main(event, context):
         return handle_queued_session(session_id)
 
     except Exception as e:
-        return {"statusCode": 500, "body": {"error": str(e)}}
+        return {
+            "statusCode": 500,
+            "body": {"error": str(e), "trace": str(e.__traceback__)},
+        }
 
 
 def parse_cookies(cookie_header: str) -> dict:
@@ -231,13 +242,21 @@ def render_queued_html(data) -> str:
             if BLOCKED_UNTIL_TIMESTAMP.isdigit():
                 blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
             else:
-                blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+                blocked_until = int(
+                    datetime.fromisoformat(
+                        BLOCKED_UNTIL_TIMESTAMP.replace("Z", "+00:00")
+                    ).timestamp()
+                )
 
             current_time = int(time.time())
             minutes_until_unblock = max(0, (blocked_until - current_time) // 60)
 
             if minutes_until_unblock > 0:
-                time_desc = f"approximately {minutes_until_unblock} minute(s)" if minutes_until_unblock > 1 else "less than a minute"
+                time_desc = (
+                    f"approximately {minutes_until_unblock} minute(s)"
+                    if minutes_until_unblock > 1
+                    else "less than a minute"
+                )
                 blocked_message = f"""
                 <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px;">
                     <strong>Notice:</strong> Access is temporarily paused for {time_desc}.
@@ -394,7 +413,11 @@ def get_queue_stats(query_params: dict) -> Dict[str, Any]:
             if BLOCKED_UNTIL_TIMESTAMP.isdigit():
                 blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
             else:
-                blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+                blocked_until = int(
+                    datetime.fromisoformat(
+                        BLOCKED_UNTIL_TIMESTAMP.replace("Z", "+00:00")
+                    ).timestamp()
+                )
 
             current_time = int(time.time())
             block_start_time = blocked_until - (BLOCK_DURATION_MINUTES * 60)
