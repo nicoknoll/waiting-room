@@ -40,6 +40,9 @@ def main(event, context):
         if path == "/validate":
             return validate_access_token(query_params)
 
+        if path == "/grant":
+            return grant_session_with_secret(query_params)
+
         session_id = get_session_id_from_cookie(event)
         session_granted = session_id and is_session_granted(session_id)
         session_queued = session_id and is_session_queued(session_id)
@@ -373,3 +376,21 @@ def validate_access_token(query_params: dict) -> Dict[str, Any]:
             "expires_in": ttl,
         },
     }
+
+
+def grant_session_with_secret(query_params: dict) -> Dict[str, Any]:
+    secret = query_params.get("secret", [None])[0]
+    next_url = query_params.get("next", ["/"])[0]
+
+    if not secret or secret != SECRET:
+        return {
+            "statusCode": 403,
+            "body": {"error": "Invalid or missing secret"},
+        }
+
+    session_id = str(uuid.uuid4())
+    current_time = int(time.time() * 1000)
+
+    redis_client.set(f"granted:{session_id}", current_time, ex=GRANTED_TTL)
+
+    return handle_granted_session(session_id, next_url=next_url)
