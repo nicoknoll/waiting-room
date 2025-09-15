@@ -7,6 +7,7 @@ import time
 import uuid
 import os
 import hashlib
+import traceback
 from http.cookies import SimpleCookie
 from typing import Optional, Dict, Any
 
@@ -97,7 +98,7 @@ def main(event, context):
     except Exception as e:
         return {
             "statusCode": 500,
-            "body": {"error": str(e), "trace": str(e.__traceback__)},
+            "body": {"error": str(e), "trace": traceback.format_exc()},
         }
 
 
