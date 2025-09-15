@@ -364,7 +364,9 @@ def calculate_wait_time(position):
     cycles_needed = (remaining_position - 1) // MAX_USERS
     slot_index = (remaining_position - 1) % MAX_USERS
 
-    return expiry_schedule[slot_index] + ((cycles_needed + 1) * GRANTED_TTL)
+    # Use 0 if slot_index doesn't exist in expiry_schedule
+    base_wait = expiry_schedule[slot_index] if slot_index < len(expiry_schedule) else 0
+    return base_wait + ((cycles_needed + 1) * GRANTED_TTL)
 
 
 def get_queue_stats(query_params: dict) -> Dict[str, Any]:
