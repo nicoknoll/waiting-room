@@ -14,6 +14,8 @@ packages:
             REDIS_LOCATION: ${REDIS_LOCATION}
             WAITING_ROOM_SECRET: ${WAITING_ROOM_SECRET}
             WAITING_ROOM_MAX_USERS: "${WAITING_ROOM_MAX_USERS}"
+            WAITING_ROOM_BLOCKED_UNTIL: "${WAITING_ROOM_BLOCKED_UNTIL}"
+            WAITING_ROOM_BLOCK_DURATION_MINUTES: "${WAITING_ROOM_BLOCK_DURATION_MINUTES}"
           parameters: {}
           annotations: {}
           limits: {}

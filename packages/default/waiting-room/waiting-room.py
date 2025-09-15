@@ -23,9 +23,36 @@ ACCESS_TOKEN_TTL = 600
 
 MAX_USERS = int(os.environ.get("WAITING_ROOM_MAX_USERS", "100"))
 SECRET = os.environ["WAITING_ROOM_SECRET"]
+BLOCKED_UNTIL_TIMESTAMP = os.environ.get("WAITING_ROOM_BLOCKED_UNTIL")
+BLOCK_DURATION_MINUTES = int(os.environ.get("WAITING_ROOM_BLOCK_DURATION_MINUTES", "30"))
 
 SESSION_COOKIE_NAME = "waiting_room_session_id"
 ACCESS_TOKEN_COOKIE_NAME = "waiting_room_access_token"
+
+
+def is_access_blocked_by_timestamp() -> bool:
+    """
+    Check if access should be blocked based on timestamp configuration.
+    Access is blocked from BLOCK_DURATION_MINUTES before BLOCKED_UNTIL_TIMESTAMP until the timestamp.
+    """
+    if not BLOCKED_UNTIL_TIMESTAMP:
+        return False
+
+    try:
+        # Parse the timestamp - assume ISO format or Unix timestamp
+        if BLOCKED_UNTIL_TIMESTAMP.isdigit():
+            blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
+        else:
+            # Try to parse as ISO format
+            blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+
+        current_time = int(time.time())
+        block_start_time = blocked_until - (BLOCK_DURATION_MINUTES * 60)  # Convert minutes to seconds
+
+        return block_start_time <= current_time <= blocked_until
+    except (ValueError, TypeError):
+        # If parsing fails, don't block access
+        return False
 
 
 def main(event, context):
@@ -35,7 +62,7 @@ def main(event, context):
         query_params = parse_qs(query_string)
 
         if path == "/stats":
-            return get_queue_stats()
+            return get_queue_stats(query_params)
 
         if path == "/validate":
             return validate_access_token(query_params)
@@ -196,11 +223,40 @@ def handle_queued_session(session_id: str) -> Dict[str, Any]:
 
 def render_queued_html(data) -> str:
     estimated_wait_min = data["estimated_wait_time"] // 60
+
+    # Check if access is blocked and add appropriate message
+    blocked_message = ""
+    if is_access_blocked_by_timestamp():
+        try:
+            if BLOCKED_UNTIL_TIMESTAMP.isdigit():
+                blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
+            else:
+                blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+
+            current_time = int(time.time())
+            minutes_until_unblock = max(0, (blocked_until - current_time) // 60)
+
+            if minutes_until_unblock > 0:
+                time_desc = f"approximately {minutes_until_unblock} minute(s)" if minutes_until_unblock > 1 else "less than a minute"
+                blocked_message = f"""
+                <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px;">
+                    <strong>Notice:</strong> Access is temporarily paused for {time_desc}.
+                    Your position in the queue is maintained, but promotion to active access is delayed.
+                </div>
+                """
+        except (ValueError, TypeError):
+            blocked_message = """
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px;">
+                <strong>Notice:</strong> Access is temporarily paused. Your position in the queue is maintained.
+            </div>
+            """
+
     return f"""
     <html>
     <head><title>Waiting Room</title></head>
     <body>
         <h1>You are in the queue</h1>
+        {blocked_message}
         <p>Your current position in the queue is: {data['position']}</p>
         <p>Estimated wait time: {estimated_wait_min == 0 and "Less than a minute" or f"{estimated_wait_min} minute(s)"}</p>
         <p>This page will refresh automatically every 15 seconds to update your position.</p>
@@ -218,6 +274,10 @@ def render_queued_html(data) -> str:
 
 def promote_queued_users():
     # batch promotion in a transaction
+
+    # Don't promote users if access is blocked by timestamp
+    if is_access_blocked_by_timestamp():
+        return
 
     with redis_client.pipeline() as pipe:
         pipe.multi()
@@ -287,7 +347,14 @@ def calculate_wait_time(position):
     return expiry_schedule[slot_index] + ((cycles_needed + 1) * GRANTED_TTL)
 
 
-def get_queue_stats() -> Dict[str, Any]:
+def get_queue_stats(query_params: dict) -> Dict[str, Any]:
+    secret = query_params.get("secret", [None])[0]
+
+    if not secret or secret != SECRET:
+        return {
+            "statusCode": 403,
+            "body": {"error": "Invalid or missing secret"},
+        }
     queued_keys = redis_client.keys("queued:*")
     granted_keys = redis_client.keys("granted:*")
 
@@ -320,6 +387,28 @@ def get_queue_stats() -> Dict[str, Any]:
     queued_sessions.sort(key=lambda x: x["queued_at"])
     granted_sessions.sort(key=lambda x: x["granted_at"])
 
+    # Add blocking information
+    blocking_info = None
+    if BLOCKED_UNTIL_TIMESTAMP:
+        try:
+            if BLOCKED_UNTIL_TIMESTAMP.isdigit():
+                blocked_until = int(BLOCKED_UNTIL_TIMESTAMP)
+            else:
+                blocked_until = int(datetime.fromisoformat(BLOCKED_UNTIL_TIMESTAMP.replace('Z', '+00:00')).timestamp())
+
+            current_time = int(time.time())
+            block_start_time = blocked_until - (BLOCK_DURATION_MINUTES * 60)
+            is_blocked = is_access_blocked_by_timestamp()
+
+            blocking_info = {
+                "is_blocked": is_blocked,
+                "block_start_time": timestamp_to_iso(block_start_time * 1000),
+                "block_end_time": timestamp_to_iso(blocked_until * 1000),
+                "block_duration_minutes": BLOCK_DURATION_MINUTES,
+            }
+        except (ValueError, TypeError):
+            blocking_info = {"error": "Invalid timestamp configuration"}
+
     return {
         "statusCode": 200,
         "body": {
@@ -329,6 +418,7 @@ def get_queue_stats() -> Dict[str, Any]:
                 "max_users": MAX_USERS,
                 "slots_available": MAX_USERS - len(granted_sessions),
             },
+            "blocking": blocking_info,
             "queued_sessions": queued_sessions,
             "granted_sessions": granted_sessions,
         },
