@@ -86,10 +86,15 @@ def main(event, context):
         if not (session_granted or session_queued):
             # ensure a session is at least queued
             session_id = create_queued_session()
+            session_queued = True
 
-        promote_queued_users()
+        if not session_granted:
+            promote_queued_users()
+            # Re-check only if we were queued (promotion may have granted us)
+            if session_queued:
+                session_granted = is_session_granted(session_id)
 
-        if is_session_granted(session_id):
+        if session_granted:
             next_url = query_params.get("next", ["/"])[0]
             return handle_granted_session(session_id, next_url=next_url)
 
@@ -226,14 +231,27 @@ def handle_queued_session(session_id: str) -> Dict[str, Any]:
         "estimated_wait_time": calculate_wait_time(position),
     }
 
+    refresh_interval = compute_refresh_interval(position)
+
     return {
         "statusCode": 200,
         "headers": {"Set-Cookie": create_session_cookie(session_id)},
-        "body": render_queued_html(data),
+        "body": render_queued_html(data, refresh_interval),
     }
 
 
-def render_queued_html(data) -> str:
+def compute_refresh_interval(position: int) -> int:
+    if position <= 10:
+        return 10
+    elif position <= 50:
+        return 20
+    elif position <= 200:
+        return 30
+    else:
+        return 60
+
+
+def render_queued_html(data, refresh_interval: int = 15) -> str:
     estimated_wait_min = data["estimated_wait_time"] // 60
 
     # Check if access is blocked and add appropriate message
@@ -275,13 +293,13 @@ def render_queued_html(data) -> str:
         {blocked_message}
         <p>Your current position in the queue is: {data['position']}</p>
         <p>Estimated wait time: {estimated_wait_min == 0 and "Less than a minute" or f"{estimated_wait_min} minute(s)"}</p>
-        <p>This page will refresh automatically every 15 seconds to update your position.</p>
+        <p>This page will refresh automatically every {refresh_interval} seconds to update your position.</p>
         <p>Please do not close this page, otherwise you will lose your place in the queue.</p>
         <p style="color: #999">Session ID: {data['session_id']}</p>
         <script>
             setTimeout(() => {{
                 window.location.reload();
-            }}, 15000); // Refresh every 15 seconds
+            }}, {refresh_interval * 1000});
         </script>
     </body>
     </html>
@@ -289,43 +307,74 @@ def render_queued_html(data) -> str:
 
 
 def promote_queued_users():
-    # batch promotion in a transaction
-
     # Don't promote users if access is blocked by timestamp
     if is_access_blocked_by_timestamp():
         return
 
-    with redis_client.pipeline() as pipe:
-        pipe.multi()
+    # Rate-limit: only run promotion every 2 seconds across all invocations
+    last = redis_client.get("promote:last")
+    now = time.time()
+    if last and (now - float(last)) < 2:
+        return
 
-        granted_count = len(redis_client.keys("granted:*"))
+    # Distributed lock so only one function instance promotes at a time
+    if not redis_client.set("promote:lock", "1", nx=True, ex=5):
+        return
+
+    try:
+        granted_keys = redis_client.keys("granted:*")
+        granted_count = len(granted_keys)
         available_slots = MAX_USERS - granted_count
 
         if available_slots <= 0:
             return
 
         queued_keys = redis_client.keys("queued:*")
-        queue_data = [(key, int(redis_client.get(key))) for key in queued_keys]
-        queue_data.sort(key=lambda x: x[1])  # Sort by timestamp
+        if not queued_keys:
+            return
 
+        # Pipeline all GETs in one round-trip
+        pipe = redis_client.pipeline()
+        for key in queued_keys:
+            pipe.get(key)
+        values = pipe.execute()
+
+        queue_data = []
+        for key, val in zip(queued_keys, values):
+            if val is not None:
+                queue_data.append((key, int(val)))
+        queue_data.sort(key=lambda x: x[1])
+
+        # Pipeline all promotions in one round-trip
+        pipe = redis_client.pipeline()
         for i in range(min(available_slots, len(queue_data))):
             key, timestamp = queue_data[i]
             session_id = key.split(":", 1)[1]
-
             pipe.delete(f"queued:{session_id}")
             pipe.set(f"granted:{session_id}", int(time.time() * 1000), ex=GRANTED_TTL)
-
         pipe.execute()
+
+        redis_client.set("promote:last", str(now), ex=10)
+    finally:
+        redis_client.delete("promote:lock")
 
 
 def get_queue_position(session_id: str) -> int:
     queued_keys = redis_client.keys("queued:*")
-    queue_data = []
+    if not queued_keys:
+        return -1
 
+    # Pipeline all GETs in one round-trip instead of N
+    pipe = redis_client.pipeline()
     for key in queued_keys:
-        timestamp = int(redis_client.get(key))
-        sid = key.split(":", 1)[1]
-        queue_data.append((sid, timestamp))
+        pipe.get(key)
+    values = pipe.execute()
+
+    queue_data = []
+    for key, val in zip(queued_keys, values):
+        if val is not None:
+            sid = key.split(":", 1)[1]
+            queue_data.append((sid, int(val)))
 
     queue_data.sort(key=lambda x: x[1])
 
@@ -338,14 +387,16 @@ def get_queue_position(session_id: str) -> int:
 
 def get_granted_expiry_schedule():
     granted_keys = redis_client.keys("granted:*")
-    expiry_times = []
+    if not granted_keys:
+        return []
 
+    # Pipeline all TTLs in one round-trip instead of N
+    pipe = redis_client.pipeline()
     for key in granted_keys:
-        ttl = redis_client.ttl(key)
-        if ttl > 0:
-            expiry_times.append(ttl)
+        pipe.ttl(key)
+    ttls = pipe.execute()
 
-    return sorted(expiry_times)
+    return sorted([ttl for ttl in ttls if ttl > 0])
 
 
 def calculate_wait_time(position):
@@ -376,31 +427,43 @@ def get_queue_stats(query_params: dict) -> Dict[str, Any]:
     queued_keys = redis_client.keys("queued:*")
     granted_keys = redis_client.keys("granted:*")
 
+    # Pipeline all reads for queued sessions
     queued_sessions = []
-    for key in queued_keys:
-        session_id = key.split(":", 1)[1]
-        timestamp = int(redis_client.get(key))
-        ttl = redis_client.ttl(key)
-        queued_sessions.append(
-            {
-                "session_id": session_id,
-                "queued_at": timestamp_to_iso(timestamp),
-                "ttl_seconds": ttl,
-            }
-        )
+    if queued_keys:
+        pipe = redis_client.pipeline()
+        for key in queued_keys:
+            pipe.get(key)
+            pipe.ttl(key)
+        results = pipe.execute()
+        for i, key in enumerate(queued_keys):
+            val, ttl = results[i * 2], results[i * 2 + 1]
+            if val is not None:
+                queued_sessions.append(
+                    {
+                        "session_id": key.split(":", 1)[1],
+                        "queued_at": timestamp_to_iso(int(val)),
+                        "ttl_seconds": ttl,
+                    }
+                )
 
+    # Pipeline all reads for granted sessions
     granted_sessions = []
-    for key in granted_keys:
-        session_id = key.split(":", 1)[1]
-        timestamp = int(redis_client.get(key))
-        ttl = redis_client.ttl(key)
-        granted_sessions.append(
-            {
-                "session_id": session_id,
-                "granted_at": timestamp_to_iso(timestamp),
-                "ttl_seconds": ttl,
-            }
-        )
+    if granted_keys:
+        pipe = redis_client.pipeline()
+        for key in granted_keys:
+            pipe.get(key)
+            pipe.ttl(key)
+        results = pipe.execute()
+        for i, key in enumerate(granted_keys):
+            val, ttl = results[i * 2], results[i * 2 + 1]
+            if val is not None:
+                granted_sessions.append(
+                    {
+                        "session_id": key.split(":", 1)[1],
+                        "granted_at": timestamp_to_iso(int(val)),
+                        "ttl_seconds": ttl,
+                    }
+                )
 
     queued_sessions.sort(key=lambda x: x["queued_at"])
     granted_sessions.sort(key=lambda x: x["granted_at"])
