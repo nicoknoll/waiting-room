@@ -81,21 +81,25 @@ return promoted
 --------------------------------------------------------------------------------
 
 local function parse_redis_url(url)
-    local r = { host = "127.0.0.1", port = 6379, password = nil, db = 0, ssl = false }
+    local r = { host = "127.0.0.1", port = 6379, password = nil, username = nil, db = 0, ssl = false }
     if not url or url == "" then return r end
 
-    if url:sub(1, 8) == "rediss://" then
+    if url:sub(1, 9) == "rediss://" then
         r.ssl = true
-        url = "redis://" .. url:sub(9)
+        url = "redis://" .. url:sub(10)
     end
     url = url:gsub("^redis://", "")
 
-    -- auth@host
+    -- auth@host (supports user:password and just password)
     local auth, rest = url:match("^(.-)@(.+)$")
     if auth then
-        local pw = auth:match(":(.+)$")
-        if pw then r.password = pw
-        elseif auth ~= "" then r.password = auth end
+        local user, pw = auth:match("^(.*):(.+)$")
+        if user and pw then
+            if user ~= "" then r.username = user end
+            r.password = pw
+        elseif auth ~= "" then
+            r.password = auth
+        end
         url = rest
     end
 
@@ -174,7 +178,11 @@ local function get_redis()
     if not ok then return nil, "redis connect: " .. (err or "unknown") end
 
     if redis_config.password then
-        ok, err = red:auth(redis_config.password)
+        if redis_config.username then
+            ok, err = red:auth(redis_config.username, redis_config.password)
+        else
+            ok, err = red:auth(redis_config.password)
+        end
         if not ok then return nil, "redis auth: " .. (err or "unknown") end
     end
 
