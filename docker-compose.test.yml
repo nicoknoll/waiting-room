@@ -1,0 +1,24 @@
+services:
+  pretix:
+    image: nginx:alpine
+    command: ['nginx', '-g', 'daemon off;']
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6399:6379"
+
+  nginx:
+    build:
+      context: ./nginx
+    ports:
+      - "8888:80"
+    environment:
+      REDIS_LOCATION: "redis://redis:6379"
+      WAITING_ROOM_SECRET: "test-secret-123"
+      WAITING_ROOM_MAX_USERS: "3"
+      WAITING_ROOM_ENABLED: "1"
+      WAITING_ROOM_BLOCKED_UNTIL: ""
+      WAITING_ROOM_BLOCK_DURATION_MINUTES: "30"
+    depends_on:
+      - redis
