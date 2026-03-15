@@ -1,12 +1,13 @@
 services:
   pretix:
-    image: nginx:alpine
-    command: ['nginx', '-g', 'daemon off;']
+    image: traefik/whoami
+    command: --port=8000
 
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8-alpine
     ports:
       - "6399:6379"
+    command: ["valkey-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
 
   nginx:
     build:
@@ -16,9 +17,13 @@ services:
     environment:
       REDIS_LOCATION: "redis://redis:6379"
       WAITING_ROOM_SECRET: "test-secret-123"
-      WAITING_ROOM_MAX_USERS: "3"
+      WAITING_ROOM_MAX_USERS: "${WAITING_ROOM_MAX_USERS:-3}"
       WAITING_ROOM_ENABLED: "1"
+      WAITING_ROOM_GRANTED_TTL: "300"
+      WAITING_ROOM_QUEUED_TTL: "300"
+      WAITING_ROOM_ACCESS_TOKEN_TTL: "600"
       WAITING_ROOM_BLOCKED_UNTIL: ""
       WAITING_ROOM_BLOCK_DURATION_MINUTES: "30"
+      WAITING_ROOM_DEBUG: "1"
     depends_on:
       - redis

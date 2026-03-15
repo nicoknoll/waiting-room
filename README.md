@@ -14,12 +14,14 @@ User -> OpenResty -> Redis (queue management via Lua)
 
 All waiting room logic runs as Lua inside OpenResty, using Redis sorted sets for O(log N) queue operations. There is no external function or service — the nginx container handles everything.
 
+Background timers on worker 0 handle promotion (every 2s) and stale session cleanup (every 30s), keeping the request path lightweight.
+
 ## How it works
 
 1. User visits `/kdp/` without an access token cookie -> redirected to `/waiting-room`
 2. `/waiting-room` checks if the user has an existing session (via cookie)
 3. If no session exists, the user is added to the queue
-4. A promotion script (rate-limited, atomic) moves users from the queue to granted when slots open up
+4. A promotion script (atomic Redis Lua) moves users from the queue to granted when slots open up — runs inline for new arrivals, and every 2s via background timer for everyone else
 5. Granted users get a session cookie + access token cookie and are redirected to the shop
 6. Queued users see a waiting page with their position and estimated wait time, which auto-refreshes with adaptive intervals
 
@@ -48,44 +50,98 @@ Environment variables:
 | `/waiting-room/validate?token=TOKEN&session=SESSION_ID` | Validate an access token |
 | `/waiting-room/grant?secret=SECRET&next=/path` | Admin: grant immediate access, bypassing the queue |
 
-## Local testing
+## Testing
 
-Requirements: Docker
+Both the integration tests and load tests use the same `docker-compose.test.yml`. It spins up Valkey (Redis-compatible), OpenResty, and a stub pretix container.
+
+### Integration tests
+
+Runs 29 test groups (71 assertions) covering all endpoints, the queue/grant lifecycle, background promotion, `/kdp/` routing, Redis failure + recovery.
 
 ```bash
-# Start Redis + OpenResty locally (port 8888, logs in foreground)
-./run_local.sh
+# Run the full test suite (starts/stops containers automatically)
+bash test.sh
+```
 
-# Or run in background
+The tests use `MAX_USERS=3` (the default in the compose file) so slots fill up quickly.
+
+### Load tests
+
+Requires [k6](https://k6.io/): `brew install k6`
+
+Two scenarios run back-to-back:
+- **thundering_herd** — 5,000 VUs arrive at once (simulates pre-sale open)
+- **steady_queue** — 1,000 VUs refreshing every ~10s (simulates waiting)
+
+```bash
+# Run (starts containers, throttles nginx to prod-like limits, runs k6)
+bash load-test.sh
+```
+
+The k6 web dashboard is available at http://localhost:5665 during the run.
+
+**Monitor container resources** in a second terminal while the load test runs:
+
+```bash
+docker stats $(docker compose -f docker-compose.test.yml ps -q)
+```
+
+**Inspect Redis** during or after a test:
+
+```bash
+# Live command stream
+docker compose -f docker-compose.test.yml exec redis redis-cli monitor
+
+# Queue/grant counts
+docker compose -f docker-compose.test.yml exec redis redis-cli ZCARD wr:queue
+docker compose -f docker-compose.test.yml exec redis redis-cli ZCARD wr:granted
+
+# Flush everything (reset between runs)
+docker compose -f docker-compose.test.yml exec redis redis-cli FLUSHALL
+```
+
+**Check nginx error logs:**
+
+```bash
+docker compose -f docker-compose.test.yml logs nginx
+```
+
+### Manual testing
+
+```bash
+# Start the stack
 docker compose -f docker-compose.test.yml up --build -d
 
 # Open in browser
 open http://localhost:8888/waiting-room
 open "http://localhost:8888/waiting-room/stats?secret=test-secret-123"
 
-# Run automated tests (32 tests covering all endpoints)
-./test.sh
-
 # Stop
 docker compose -f docker-compose.test.yml down
 ```
 
-The test setup uses `MAX_USERS=3` so you can easily fill the slots and see the queue page. To test queuing:
+To see the queue page: grant 3 users to fill all slots, then visit in an incognito window:
 
-1. Open `http://localhost:8888/waiting-room/grant?secret=test-secret-123` three times to fill slots
-2. Open `http://localhost:8888/waiting-room` in an incognito window — you'll see the queue page
+```bash
+curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev/null
+curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev/null
+curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev/null
+open http://localhost:8888/waiting-room
+```
 
 ## Project structure
 
 ```
 nginx/
   Dockerfile          # OpenResty (alpine) + Lua + envsubst
-  nginx.conf          # OpenResty config with Lua integration
+  nginx.conf          # OpenResty config with Lua integration + background timers
   run.sh              # Entrypoint: envsubst + start OpenResty
   lua/
     waiting_room.lua  # All waiting room logic
-docker-compose.test.yml  # Local test setup
-test.sh                  # Automated test suite
+docker-compose.test.yml  # Shared test/load-test setup
+test.sh                  # Integration test suite (71 assertions)
+load-test.sh             # Load test runner (wraps k6)
+load-test.js             # k6 scenarios
 ```
 
 ## Redis data model
@@ -98,4 +154,4 @@ Uses sorted sets for O(log N) operations (no `KEYS` scans):
 | `wr:granted` | Sorted Set | expiry timestamp (s) | session_id |
 | `wr:heartbeat` | Hash | — | session_id -> last seen (s) |
 
-Promotion runs as an atomic Redis Lua script, rate-limited to once per 2 seconds via OpenResty shared memory.
+Promotion runs as an atomic Redis Lua script. Background timer (worker 0) runs it every 2s; new arrivals also run it inline for instant promotion when slots are free.
