@@ -6,249 +6,48 @@
 --   wr:granted    - sorted set: member=session_id, score=expiry_timestamp_seconds
 --   wr:heartbeat  - hash: session_id -> last_seen_timestamp_seconds
 
-local redis = require "resty.redis"
-local resty_sha1 = require "resty.sha1"
 local resty_str = require "resty.string"
+local resty_random = require "resty.random"
 local cjson = require "cjson"
+local config = require "config"
+local redis_helper = require "redis_helper"
+local scripts = require "scripts"
 
--- Redis keys
-local QUEUE_KEY = "wr:queue"
-local GRANTED_KEY = "wr:granted"
-local HEARTBEAT_KEY = "wr:heartbeat"
-
--- TTLs (seconds)
-local QUEUED_TTL = tonumber(os.getenv("WAITING_ROOM_QUEUED_TTL") or "300")
-local GRANTED_TTL = tonumber(os.getenv("WAITING_ROOM_GRANTED_TTL") or "300")
-local ACCESS_TOKEN_TTL = tonumber(os.getenv("WAITING_ROOM_ACCESS_TOKEN_TTL") or "600")
+-- Local aliases for frequently used config values
+local QUEUE_KEY = config.QUEUE_KEY
+local GRANTED_KEY = config.GRANTED_KEY
+local HEARTBEAT_KEY = config.HEARTBEAT_KEY
+local QUEUED_TTL = config.QUEUED_TTL
+local GRANTED_TTL = config.GRANTED_TTL
+local ACCESS_TOKEN_TTL = config.ACCESS_TOKEN_TTL
+local MAX_USERS = config.MAX_USERS
+local SECRET = config.SECRET
+local SECURE_FLAG = config.SECURE_FLAG
+local BLOCKED_UNTIL = config.BLOCKED_UNTIL
+local BLOCK_DURATION_MINUTES = config.BLOCK_DURATION_MINUTES
+local PROMOTE_SCRIPT = scripts.PROMOTE
 
 -- Cookie names
 local SESSION_COOKIE_NAME = "waiting_room_session_id"
 local ACCESS_TOKEN_COOKIE_NAME = "waiting_room_access_token"
-
--- Config from environment
-local MAX_USERS = tonumber(os.getenv("WAITING_ROOM_MAX_USERS") or "100")
-local SECRET = os.getenv("WAITING_ROOM_SECRET") or ""
-local BLOCKED_UNTIL_RAW = os.getenv("WAITING_ROOM_BLOCKED_UNTIL") or ""
-local BLOCK_DURATION_MINUTES = tonumber(os.getenv("WAITING_ROOM_BLOCK_DURATION_MINUTES") or "30")
-
--- Atomic promotion script (runs on Redis server)
--- Only checks heartbeats for candidates being considered for promotion,
--- not the entire queue. Stale cleanup is handled by a background timer.
-local PROMOTE_SCRIPT = [[
-local queue_key = KEYS[1]
-local granted_key = KEYS[2]
-local heartbeat_key = KEYS[3]
-local now = tonumber(ARGV[1])
-local max_users = tonumber(ARGV[2])
-local granted_ttl = tonumber(ARGV[3])
-local queued_ttl = tonumber(ARGV[4])
-local check_session = ARGV[5]
-
--- Clean expired grants
-redis.call('ZREMRANGEBYSCORE', granted_key, '-inf', now)
-
--- Count available slots
-local granted_count = redis.call('ZCARD', granted_key)
-local available = max_users - granted_count
-if available <= 0 then
-    -- Still check if session was already granted
-    if check_session and check_session ~= "" then
-        local gs = redis.call('ZSCORE', granted_key, check_session)
-        if gs then return {0, tostring(gs)} end
-    end
-    return {0, ""}
-end
-
--- Fetch more candidates than needed to skip stale ones
-local fetch_count = math.max(10, available * 3)
-local candidates = redis.call('ZRANGE', queue_key, 0, fetch_count - 1)
-local stale_cutoff = now - queued_ttl
-local promoted = 0
-for _, sid in ipairs(candidates) do
-    if promoted >= available then break end
-    local hb = redis.call('HGET', heartbeat_key, sid)
-    if hb and tonumber(hb) >= stale_cutoff then
-        redis.call('ZREM', queue_key, sid)
-        redis.call('HDEL', heartbeat_key, sid)
-        redis.call('ZADD', granted_key, now + granted_ttl, sid)
-        promoted = promoted + 1
-    end
-    -- stale users are skipped here, cleaned up by background timer
-end
-
--- Return granted score for the checked session
-local session_score = ""
-if check_session and check_session ~= "" then
-    local gs = redis.call('ZSCORE', granted_key, check_session)
-    if gs then session_score = tostring(gs) end
-end
-
-return {promoted, session_score}
-]]
-
 
 
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
 
-local function parse_redis_url(url)
-    local r = { host = "127.0.0.1", port = 6379, password = nil, username = nil, db = 0, ssl = false }
-    if not url or url == "" then return r end
-
-    if url:sub(1, 9) == "rediss://" then
-        r.ssl = true
-        url = "redis://" .. url:sub(10)
-    end
-    url = url:gsub("^redis://", "")
-
-    -- auth@host (supports user:password and just password)
-    local auth, rest = url:match("^(.-)@(.+)$")
-    if auth then
-        local user, pw = auth:match("^(.*):(.+)$")
-        if user and pw then
-            if user ~= "" then r.username = user end
-            r.password = pw
-        elseif auth ~= "" then
-            r.password = auth
-        end
-        url = rest
-    end
-
-    -- host:port/db
-    local hp, db = url:match("^([^/]+)/(%d+)")
-    if not hp then hp = url:gsub("/+$", "") end
-    if db then r.db = tonumber(db) end
-
-    local h, p = hp:match("^(.+):(%d+)$")
-    if h then r.host = h; r.port = tonumber(p)
-    elseif hp ~= "" then r.host = hp end
-
-    return r
-end
-
-local redis_config = parse_redis_url(os.getenv("REDIS_LOCATION"))
-
-local function get_nameservers()
-    local nameservers = {}
-    local f = io.open("/etc/resolv.conf", "r")
-    if f then
-        for line in f:lines() do
-            local ns = line:match("^%s*nameserver%s+(%S+)")
-            if ns then table.insert(nameservers, ns) end
-        end
-        f:close()
-    end
-    if #nameservers == 0 then
-        nameservers = { "8.8.8.8" }
-    end
-    return nameservers
-end
-
-local function resolve_host(host)
-    -- If it's already an IP, return as-is
-    if host:match("^%d+%.%d+%.%d+%.%d+$") then
-        return host
-    end
-    local resolver = require "resty.dns.resolver"
-    local r, err = resolver:new({
-        nameservers = get_nameservers(),
-        retrans = 3,
-        timeout = 2000,
-    })
-    if not r then return nil, "resolver: " .. (err or "unknown") end
-    local answers, err = r:query(host, { qtype = r.TYPE_A })
-    if not answers then return nil, "dns query: " .. (err or "unknown") end
-    if answers.errcode then return nil, "dns error: " .. (answers.errstr or "unknown") end
-    for _, ans in ipairs(answers) do
-        if ans.address then return ans.address end
-    end
-    return nil, "no A record for " .. host
-end
-
--- Resolve Redis host once at first use (cached per worker)
-local resolved_redis_host = nil
-
-local function get_redis()
-    local red = redis:new()
-    red:set_timeouts(300, 2000, 2000)
-
-    -- Resolve hostname on first call, cache for this worker
-    if not resolved_redis_host then
-        local ip, err = resolve_host(redis_config.host)
-        if not ip then return nil, "redis resolve: " .. (err or "unknown") end
-        resolved_redis_host = ip
-    end
-
-    local ok, err
-    if redis_config.ssl then
-        ok, err = red:connect(resolved_redis_host, redis_config.port,
-            { ssl = true, ssl_verify = false })
-    else
-        ok, err = red:connect(resolved_redis_host, redis_config.port)
-    end
-    if not ok then return nil, "redis connect: " .. (err or "unknown") end
-
-    if redis_config.password then
-        if redis_config.username then
-            ok, err = red:auth(redis_config.username, redis_config.password)
-        else
-            ok, err = red:auth(redis_config.password)
-        end
-        if not ok then return nil, "redis auth: " .. (err or "unknown") end
-    end
-
-    if redis_config.db > 0 then
-        ok, err = red:select(redis_config.db)
-        if not ok then return nil, "redis select: " .. (err or "unknown") end
-    end
-
-    return red
-end
-
-local function release_redis(red)
-    if red then red:set_keepalive(10000, 100) end
-end
-
 local function generate_session_id()
-    local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
-    return string.gsub(template, "[xy]", function(c)
-        local v = (c == "x") and math.random(0, 15) or math.random(8, 11)
-        return string.format("%x", v)
-    end)
+    local bytes = resty_random.bytes(16, true)
+    if not bytes then bytes = resty_random.bytes(16) end
+    return resty_str.to_hex(bytes)
 end
 
 local function generate_access_token(session_id)
-    local sha1 = resty_sha1:new()
-    sha1:update(session_id .. SECRET)
-    return resty_str.to_hex(sha1:final())
+    return resty_str.to_hex(ngx.hmac_sha1(SECRET, session_id))
 end
 
 local function timestamp_to_iso(timestamp_ms)
     return os.date("!%Y-%m-%dT%H:%M:%S", math.floor(timestamp_ms / 1000))
-end
-
-local function parse_blocked_until()
-    if BLOCKED_UNTIL_RAW == "" then return nil end
-    if BLOCKED_UNTIL_RAW:match("^%d+$") then return tonumber(BLOCKED_UNTIL_RAW) end
-    local y, m, d, h, mn, s = BLOCKED_UNTIL_RAW:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-    if y then
-        return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d),
-                         hour = tonumber(h), min = tonumber(mn), sec = tonumber(s) })
-    end
-    return nil
-end
-
-local BLOCKED_UNTIL = parse_blocked_until()
-
-local function is_access_blocked()
-    if not BLOCKED_UNTIL then return false, 0 end
-    local now = ngx.time()
-    local block_start = BLOCKED_UNTIL - (BLOCK_DURATION_MINUTES * 60)
-    if now >= block_start and now <= BLOCKED_UNTIL then
-        return true, BLOCKED_UNTIL - now
-    end
-    return false, 0
 end
 
 local function is_null(v)
@@ -264,8 +63,6 @@ local function parse_cookies()
     end
     return cookies
 end
-
-local SECURE_FLAG = os.getenv("WAITING_ROOM_DEBUG") == "1" and "" or "; Secure"
 
 local function set_cookies(session_id, access_token)
     local cookies = {}
@@ -333,7 +130,7 @@ local function render_queued_html(data, refresh_interval)
         or string.format("%d minute(s)", wait_min)
 
     local blocked_message = ""
-    local blocked, seconds_left = is_access_blocked()
+    local blocked, seconds_left = config.is_access_blocked()
     if blocked and seconds_left > 0 then
         local minutes_left = math.floor(seconds_left / 60)
         local time_desc = minutes_left >= 1
@@ -450,7 +247,7 @@ local function handle_main(red)
     -- Promotion runs in a background timer (every 2s on worker 0).
     -- Only run inline for new arrivals so they get instant promotion when slots are free.
     if not session_granted then
-        local blocked = is_access_blocked()
+        local blocked = config.is_access_blocked()
         local ran_promotion = false
         if not blocked and is_new_arrival then
             local result, eval_err = promote(red, 3,
@@ -622,7 +419,7 @@ local function handle_stats(red)
     local blocking_info = cjson.null
     if BLOCKED_UNTIL then
         local block_start = BLOCKED_UNTIL - (BLOCK_DURATION_MINUTES * 60)
-        local blocked = is_access_blocked()
+        local blocked = config.is_access_blocked()
         blocking_info = {
             is_blocked = blocked,
             block_start_time = timestamp_to_iso(block_start * 1000),
@@ -719,7 +516,7 @@ end
 local uri = ngx.var.uri
 local subpath = uri:match("^/waiting%-room(.*)$") or ""
 
-local red, err = get_redis()
+local red, err = redis_helper.get_redis()
 if not red then
     ngx.log(ngx.ERR, "Redis connection failed (", subpath, "): ", err)
     if subpath == "/stats" or subpath == "/validate" or subpath == "/grant" then
@@ -746,7 +543,7 @@ local ok, handler_err = pcall(function()
     end
 end)
 
-release_redis(red)
+redis_helper.release_redis(red)
 
 if not ok then
     ngx.status = 500

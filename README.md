@@ -84,7 +84,7 @@ Both the integration tests and load tests use the same `docker-compose.test.yml`
 
 ### Integration tests
 
-Runs 29 test groups (71 assertions) covering all endpoints, the queue/grant lifecycle, background promotion, protected path routing, Redis failure + recovery.
+Covers all endpoints, the queue/grant lifecycle, background promotion, protected path routing, Redis failure + recovery.
 
 ```bash
 # Run the full test suite (starts/stops containers automatically)
@@ -155,21 +155,6 @@ curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev
 curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev/null
 curl -s "http://localhost:8888/waiting-room/grant?secret=test-secret-123" > /dev/null
 open http://localhost:8888/waiting-room
-```
-
-## Project structure
-
-```
-nginx/
-  Dockerfile          # OpenResty (alpine) + Lua + envsubst
-  nginx.conf          # OpenResty config with Lua integration + background timers
-  run.sh              # Entrypoint: envsubst + start OpenResty
-  lua/
-    waiting_room.lua  # All waiting room logic
-docker-compose.test.yml  # Shared test/load-test setup
-test.sh                  # Integration test suite (71 assertions)
-load-test.sh             # Load test runner (wraps k6)
-load-test.js             # k6 scenarios
 ```
 
 ## Redis data model

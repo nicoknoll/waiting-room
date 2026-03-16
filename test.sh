@@ -224,8 +224,11 @@ assert "Shows max_users 3" '"max_users":3' "$RESP"
 
 echo ""
 echo "=== 22. Queued user gets promoted when slots free up (background timer) ==="
-# Expire all grants by manipulating Redis directly
-docker compose -f docker-compose.test.yml exec -T redis redis-cli DEL wr:granted > /dev/null 2>&1
+# Set all grant scores to epoch 1 (expired) — the promote script's ZREMRANGEBYSCORE
+# will clean these up, then promote queued users into the freed slots
+docker compose -f docker-compose.test.yml exec -T redis redis-cli EVAL \
+    "local ms = redis.call('ZRANGE', KEYS[1], 0, -1); for _, m in ipairs(ms) do redis.call('ZADD', KEYS[1], 1, m) end; return #ms" \
+    1 wr:granted > /dev/null 2>&1
 # Wait for background promotion timer to run (every 2s)
 sleep 4
 # First queued user should now be granted
