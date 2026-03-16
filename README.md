@@ -4,6 +4,32 @@ A waiting room / queue system for any web application, built with OpenResty (ngi
 
 When enabled, users accessing the protected path are placed in a queue and granted access in order, up to a configurable maximum number of concurrent users.
 
+## Quick start
+
+1. Add the waitingroom service to your stack:
+
+```yaml
+# docker-compose.yml
+services:
+  waitingroom:
+    build: ./nginx
+    ports:
+      - "80:80"
+    environment:
+      REDIS_LOCATION: "redis://redis:6379"
+      WAITING_ROOM_SECRET: "change-me"
+      WAITING_ROOM_ENABLED: "1"
+      WAITING_ROOM_UPSTREAM_URL: "http://your-app:8000"
+      WAITING_ROOM_PROTECTED_PATH: "/shop/"
+
+  redis:
+    image: valkey/valkey:8-alpine
+```
+
+2. Point your traffic (load balancer, DNS, etc.) at the waitingroom container instead of your app. It acts as a reverse proxy: all requests are forwarded to your upstream, but users hitting the protected path without access get queued first.
+
+3. That's it. Unprotected paths (everything outside `WAITING_ROOM_PROTECTED_PATH`) are proxied straight through with no waiting room logic.
+
 ## Architecture
 
 ```
