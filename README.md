@@ -1,14 +1,14 @@
 # Waitingroom
 
-A waiting room / queue system for pretix, built with OpenResty (nginx + Lua) and Redis.
+A waiting room / queue system for any web application, built with OpenResty (nginx + Lua) and Redis.
 
-When enabled, users accessing the ticket shop are placed in a queue and granted access in order, up to a configurable maximum number of concurrent users.
+When enabled, users accessing the protected path are placed in a queue and granted access in order, up to a configurable maximum number of concurrent users.
 
 ## Architecture
 
 ```
 User -> OpenResty -> Redis (queue management via Lua)
-                  -> pretix (if access granted)
+                  -> upstream (if access granted)
                   -> queue page (if waiting)
 ```
 
@@ -18,11 +18,11 @@ Background timers on worker 0 handle promotion (every 2s) and stale session clea
 
 ## How it works
 
-1. User visits `/kdp/` without an access token cookie -> redirected to `/waiting-room`
+1. User visits the protected path without an access token cookie -> redirected to `/waiting-room`
 2. `/waiting-room` checks if the user has an existing session (via cookie)
 3. If no session exists, the user is added to the queue
 4. A promotion script (atomic Redis Lua) moves users from the queue to granted when slots open up — runs inline for new arrivals, and every 2s via background timer for everyone else
-5. Granted users get a session cookie + access token cookie and are redirected to the shop
+5. Granted users get a session cookie + access token cookie and are redirected to the protected path
 6. Queued users see a waiting page with their position and estimated wait time, which auto-refreshes with adaptive intervals
 
 ## Configuration
@@ -40,6 +40,8 @@ Environment variables:
 | `WAITING_ROOM_QUEUED_TTL` | No | Seconds a queued session stays alive without polling (default: 300) |
 | `WAITING_ROOM_GRANTED_TTL` | No | Seconds a granted session lasts (default: 300) |
 | `WAITING_ROOM_ACCESS_TOKEN_TTL` | No | Seconds the access token cookie is valid (default: 600) |
+| `WAITING_ROOM_PROTECTED_PATH` | No | URL prefix to protect with the waiting room (default: `/`) |
+| `WAITING_ROOM_UPSTREAM_URL` | No | Backend service to proxy to (default: `http://localhost:8000`) |
 
 ## Endpoints
 
@@ -52,11 +54,11 @@ Environment variables:
 
 ## Testing
 
-Both the integration tests and load tests use the same `docker-compose.test.yml`. It spins up Valkey (Redis-compatible), OpenResty, and a stub pretix container.
+Both the integration tests and load tests use the same `docker-compose.test.yml`. It spins up Valkey (Redis-compatible), OpenResty, and a stub upstream container.
 
 ### Integration tests
 
-Runs 29 test groups (71 assertions) covering all endpoints, the queue/grant lifecycle, background promotion, `/kdp/` routing, Redis failure + recovery.
+Runs 29 test groups (71 assertions) covering all endpoints, the queue/grant lifecycle, background promotion, protected path routing, Redis failure + recovery.
 
 ```bash
 # Run the full test suite (starts/stops containers automatically)

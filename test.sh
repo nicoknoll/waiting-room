@@ -10,6 +10,7 @@ PASS=0
 FAIL=0
 BASE="http://localhost:8888"
 SECRET="test-secret-123"
+PROTECTED_PATH="/kdp/"
 
 assert() {
     local name="$1"
@@ -76,17 +77,17 @@ TOKEN1=$(echo "$RESP" | grep -o 'waiting_room_access_token=[^;]*' | head -1 | cu
 
 echo ""
 echo "=== 2. New user with ?next= param gets redirected to that URL ==="
-RESP=$(curl -s -D- "$BASE/waiting-room?next=/kdp/my-event/" 2>&1)
+RESP=$(curl -s -D- "$BASE/waiting-room?next=${PROTECTED_PATH}my-event/" 2>&1)
 assert_status "Returns 302" "302" "$RESP"
-assert "Redirects to next URL" "Location: /kdp/my-event/" "$RESP"
-assert "HTML contains next URL link" "/kdp/my-event/" "$RESP"
+assert "Redirects to next URL" "Location: ${PROTECTED_PATH}my-event/" "$RESP"
+assert "HTML contains next URL link" "${PROTECTED_PATH}my-event/" "$RESP"
 
 echo ""
 echo "=== 3. Returning granted user gets 302 again (not re-queued) ==="
-RESP=$(curl -s -D- -b "waiting_room_session_id=$SESSION1" "$BASE/waiting-room?next=/kdp/" 2>&1)
+RESP=$(curl -s -D- -b "waiting_room_session_id=$SESSION1" "$BASE/waiting-room?next=${PROTECTED_PATH}" 2>&1)
 assert_status "Returns 302" "302" "$RESP"
 assert "Sets access token cookie" "waiting_room_access_token=" "$RESP"
-assert "Redirects to next" "Location: /kdp/" "$RESP"
+assert "Redirects to next" "Location: ${PROTECTED_PATH}" "$RESP"
 
 echo ""
 echo "=== 4. Bogus session cookie is treated as new arrival ==="
@@ -143,9 +144,9 @@ assert "Session not found" "not found or not granted" "$RESP"
 
 echo ""
 echo "=== 13. Grant with secret and next param ==="
-RESP=$(curl -s -D- "$BASE/waiting-room/grant?secret=$SECRET&next=/kdp/" 2>&1)
+RESP=$(curl -s -D- "$BASE/waiting-room/grant?secret=$SECRET&next=${PROTECTED_PATH}" 2>&1)
 assert_status "Returns 302" "302" "$RESP"
-assert "Redirects to /kdp/" "Location: /kdp/" "$RESP"
+assert "Redirects to protected path" "Location: ${PROTECTED_PATH}" "$RESP"
 assert "Sets session cookie" "waiting_room_session_id=" "$RESP"
 assert "Sets access token cookie" "waiting_room_access_token=" "$RESP"
 
@@ -234,20 +235,20 @@ assert "Sets access token cookie" "waiting_room_access_token=" "$RESP"
 assert "Shows granted page" "Access Granted" "$RESP"
 
 echo ""
-echo "=== 23. /kdp/ without access token redirects to waiting room ==="
-RESP=$(curl -s -D- -o /dev/null -w "%{http_code}|%{redirect_url}" "$BASE/kdp/my-event/" 2>&1)
+echo "=== 23. Protected path without access token redirects to waiting room ==="
+RESP=$(curl -s -D- -o /dev/null -w "%{http_code}|%{redirect_url}" "$BASE${PROTECTED_PATH}my-event/" 2>&1)
 # Should get 302 redirect
-assert "Redirects from /kdp/" "302" "$RESP"
+assert "Redirects from protected path" "302" "$RESP"
 
 echo ""
-echo "=== 24. /kdp/ with access token passes through ==="
+echo "=== 24. Protected path with access token passes through ==="
 # First get a valid grant to get cookies
 GRANT_RESP=$(curl -s -D- "$BASE/waiting-room/grant?secret=$SECRET" 2>&1)
 GRANT_TOKEN=$(echo "$GRANT_RESP" | grep -o 'waiting_room_access_token=[^;]*' | head -1 | cut -d= -f2)
 GRANT_SESSION=$(echo "$GRANT_RESP" | grep -o 'waiting_room_session_id=[^;]*' | head -1 | cut -d= -f2)
-# Now hit /kdp/ with the token — should proxy to pretix (nginx default page, not a redirect)
-RESP=$(curl -s -D- -b "waiting_room_access_token=$GRANT_TOKEN;waiting_room_session_id=$GRANT_SESSION" "$BASE/kdp/" 2>&1)
-# The pretix container is just nginx:alpine, so it should return something (404 or 200),
+# Now hit protected path with the token — should proxy to upstream, not redirect
+RESP=$(curl -s -D- -b "waiting_room_access_token=$GRANT_TOKEN;waiting_room_session_id=$GRANT_SESSION" "$BASE${PROTECTED_PATH}" 2>&1)
+# The upstream container is traefik/whoami, so it should return 200,
 # but NOT a 302 redirect to /waiting-room
 assert_not "Does not redirect to waiting room" "Location: /waiting-room" "$RESP"
 

@@ -1,5 +1,5 @@
 services:
-  pretix:
+  upstream:
     image: traefik/whoami
     command: --port=8000
 
@@ -25,5 +25,8 @@ services:
       WAITING_ROOM_BLOCKED_UNTIL: ""
       WAITING_ROOM_BLOCK_DURATION_MINUTES: "30"
       WAITING_ROOM_DEBUG: "1"
+      WAITING_ROOM_PROTECTED_PATH: "/kdp/"
+      WAITING_ROOM_UPSTREAM_URL: "http://upstream:8000"
     depends_on:
       - redis
+      - upstream

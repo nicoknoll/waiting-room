@@ -1,5 +1,5 @@
 /**
- * k6 load test for pretix-waitingroom
+ * k6 load test for waitingroom
  *
  * Install: brew install k6
  * Run (local docker-compose):  k6 run load-test.js
@@ -27,6 +27,7 @@ import { randomIntBetween } from "https://jslib.k6.io/k6-utils/1.4.0/index.js";
 // ---------------------------------------------------------------------------
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8888";
+const PROTECTED_PATH = __ENV.PROTECTED_PATH || "/kdp/";
 
 // ---------------------------------------------------------------------------
 // Custom metrics
@@ -75,7 +76,7 @@ export const options = {
   },
 
   thresholds: {
-    // Only measure latency on waiting-room endpoints (not the pretix stub)
+    // Only measure latency on waiting-room endpoints (not the upstream stub)
     "http_req_duration{name:waiting_room_main}": ["p(95)<500", "p(99)<1000"],
     "http_req_duration{name:waiting_room_refresh}": ["p(95)<500", "p(99)<1000"],
     // No 500s from the waiting room
@@ -91,7 +92,7 @@ export function newArrival() {
   // Use the VU's built-in cookie jar so the session persists across iterations.
   // Without this, each k6 loop creates a new user instead of simulating refreshes.
   const jar = http.cookieJar();
-  const url = `${BASE_URL}/waiting-room?next=/kdp/`;
+  const url = `${BASE_URL}/waiting-room?next=${PROTECTED_PATH}`;
 
   // If we already have a session cookie, this is a refresh, not a new arrival
   const cookies = jar.cookiesForURL(url);
@@ -116,7 +117,7 @@ export function newArrival() {
     grantedCounter.add(1);
 
     check(res, {
-      "redirects to /kdp/": (r) => (r.headers["Location"] || "").includes("/kdp/"),
+      "redirects to protected path": (r) => (r.headers["Location"] || "").includes(PROTECTED_PATH),
       "sets access token cookie": (r) =>
         r.cookies["waiting_room_access_token"] !== undefined,
     });
